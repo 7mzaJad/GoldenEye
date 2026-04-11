@@ -30,8 +30,10 @@ cd Inference
 pip install -r requirements.txt
 ```
 
-> **Note:** On macOS with Apple Silicon, `onnxruntime` will automatically
+> **Note (macOS):** On macOS with Apple Silicon, `onnxruntime` will automatically
 > use the CoreML execution provider for hardware acceleration.
+
+> **Note (Windows/Linux):** For maximum performance on 4K camera feeds or heavy simulations, install `onnxruntime-gpu` instead of the standard `onnxruntime`. The application engine will automatically detect your NVIDIA GPU and configure the **CUDA Execution Provider** fallback!
 
 ### 2. Verify Model Files
 
