@@ -44,7 +44,8 @@ class CameraPanel(QFrame):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
-        img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        # .copy() prevents memory corruption if the numpy array is garbage collected
+        img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(img)
 
         # Scale to fit the display label while keeping aspect ratio

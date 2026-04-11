@@ -2,9 +2,9 @@
 Camera capture thread and device discovery.
 
 Runs in a separate QThread to avoid blocking the GUI.
-Emits raw BGR frames via a Qt signal for the inference worker
-to consume. Implements frame skipping when the consumer
-can't keep up.
+Writes frames to a shared thread-safe FrameBuffer and emits a lightweight
+signal for the inference worker to consume, completely preventing
+endless queueing and "time-travel" latency.
 
 Also provides scan_cameras() for auto-detecting available devices
 and get_preferred_camera() for iPhone / Continuity Camera preference.
@@ -20,6 +20,35 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
 logger = logging.getLogger(__name__)
+
+
+# ── Thread-Safe Frame Buffer ─────────────────────────────────────────────
+
+class FrameBuffer:
+    """A thread-safe single-slot container for the latest camera frame.
+    
+    Prevents unbounded queue growth by purely overwriting the previous frame.
+    """
+    def __init__(self):
+        self._mutex = QMutex()
+        self._frame: np.ndarray | None = None
+
+    def put(self, frame: np.ndarray) -> None:
+        """Write the latest frame, destroying the previous one."""
+        with QMutexLocker(self._mutex):
+            self._frame = frame
+
+    def get(self) -> np.ndarray | None:
+        """Retrieve the latest frame and clear the slot."""
+        with QMutexLocker(self._mutex):
+            frame = self._frame
+            self._frame = None
+            return frame
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        with QMutexLocker(self._mutex):
+            self._frame = None
 
 # Keywords that identify an iPhone / Continuity Camera device
 _IPHONE_KEYWORDS = ("iphone", "continuity", "ios", "apple")
@@ -143,16 +172,17 @@ class CameraThread(QThread):
     """Captures frames from a camera device in a background thread.
 
     Signals:
-        frame_ready(np.ndarray): Emitted with each new BGR frame.
-        error(str):              Emitted when camera access fails.
+        frame_ready(): Emitted when a new frame is written to the buffer.
+        error(str):    Emitted when camera access fails.
     """
 
-    frame_ready = Signal(np.ndarray)
+    frame_ready = Signal()
     error = Signal(str)
 
-    def __init__(self, camera_index: int = 0, parent=None):
+    def __init__(self, camera_index: int, buffer: FrameBuffer, parent=None):
         super().__init__(parent)
         self._camera_index = camera_index
+        self._buffer = buffer
         self._running = False
         self._mutex = QMutex()
         self._cap: cv2.VideoCapture | None = None
@@ -192,7 +222,8 @@ class CameraThread(QThread):
             if not ret:
                 continue
 
-            self.frame_ready.emit(frame)
+            self._buffer.put(frame)
+            self.frame_ready.emit()
 
         self._cap.release()
         self._cap = None

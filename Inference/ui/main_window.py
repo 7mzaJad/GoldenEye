@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.engine import InferenceEngine
-from handlers.camera import CameraThread, scan_cameras, get_preferred_camera
+from core.engine import InferenceEngine
+from handlers.camera import CameraThread, FrameBuffer, scan_cameras, get_preferred_camera
 from handlers.image import ImageHandler
 from utils.config_loader import load_config, resolve_model_path
 from utils.drawing import draw_detections, Detection
@@ -43,8 +44,9 @@ class InferenceWorker(QObject):
     result_ready = Signal(np.ndarray, list, float)  # annotated_frame, detections, ms
     error = Signal(str)
 
-    def __init__(self):
+    def __init__(self, buffer: FrameBuffer):
         super().__init__()
+        self._buffer = buffer
         self._engine: InferenceEngine | None = None
         self._conf_threshold = 0.25
         self._iou_threshold = 0.45
@@ -61,10 +63,15 @@ class InferenceWorker(QObject):
     def is_busy(self) -> bool:
         return self._busy
 
-    @Slot(np.ndarray)
-    def process_frame(self, frame: np.ndarray) -> None:
-        """Run inference on a single frame. Skips if already busy."""
+    @Slot()
+    def trigger_inference(self) -> None:
+        """Run inference on the newest frame from the buffer, dropping intermediate ones."""
         if self._busy or self._engine is None or not self._engine.is_loaded:
+            return
+
+        # Fetch latest frame, which clears the buffer. If None, we've already processed it.
+        frame = self._buffer.get()
+        if frame is None:
             return
 
         self._busy = True
@@ -86,8 +93,8 @@ class InferenceWorker(QObject):
 class MainWindow(QMainWindow):
     """GoldenEye main application window."""
 
-    # Internal signal to send frames to the inference worker thread
-    _send_frame = Signal(np.ndarray)
+    # Internal signal to trigger the inference worker thread
+    _trigger_inference = Signal()
 
     def __init__(self):
         super().__init__()
@@ -103,6 +110,7 @@ class MainWindow(QMainWindow):
         self._fps_times: deque[float] = deque(maxlen=30)
         self._cameras: list = []           # detected CameraDevice list
         self._selected_cam_index: int = 0  # currently selected device index
+        self._frame_buffer = FrameBuffer() # Single-slot overwrite buffer for zero latency
 
         # Apply stylesheet
         self.setStyleSheet(MAIN_STYLESHEET)
@@ -172,11 +180,11 @@ class MainWindow(QMainWindow):
     def _setup_worker(self) -> None:
         """Create the inference worker and move it to a background thread."""
         self._worker_thread = QThread()
-        self._worker = InferenceWorker()
+        self._worker = InferenceWorker(self._frame_buffer)
         self._worker.moveToThread(self._worker_thread)
 
         # Connect signals
-        self._send_frame.connect(self._worker.process_frame)
+        self._trigger_inference.connect(self._worker.trigger_inference)
         self._worker.result_ready.connect(self._on_inference_result)
         self._worker.error.connect(self._on_inference_error)
 
@@ -244,7 +252,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._camera_thread = CameraThread(cam_index)
+        self._frame_buffer.clear()
+        self._camera_thread = CameraThread(cam_index, self._frame_buffer)
         self._camera_thread.frame_ready.connect(self._on_camera_frame)
         self._camera_thread.error.connect(self._on_camera_error)
         self._camera_thread.start()
@@ -277,10 +286,10 @@ class MainWindow(QMainWindow):
 
     # ── Signal Handlers ────────────────────────────────────────────────
 
-    @Slot(np.ndarray)
-    def _on_camera_frame(self, frame: np.ndarray) -> None:
-        """Received a new camera frame — send to inference worker."""
-        self._send_frame.emit(frame)
+    @Slot()
+    def _on_camera_frame(self) -> None:
+        """Camera wrote a new frame successfully — trigger worker if idle."""
+        self._trigger_inference.emit()
 
     @Slot(np.ndarray, list, float)
     def _on_inference_result(
