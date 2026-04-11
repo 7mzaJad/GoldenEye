@@ -1,0 +1,25 @@
+# ============================================================================
+# GoldenEye — Inference Configuration
+# ============================================================================
+# Edit this file to change model paths, class names, and default thresholds.
+
+models:
+  yolov8n:
+    path: "../models/Yolov8n/best.onnx"
+    type: "yolov8"         # Standard YOLOv8 output — requires NMS
+  yolov26:
+    path: "../models/Yolov26/best.onnx"
+    type: "yolov26"        # NMS-free output — 300 detections × 6
+
+# Class names in order of class ID
+class_names:
+  - "human"
+
+# Default runtime parameters
+defaults:
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+  input_size: 640
+  camera_index: 0          # Fallback device index if auto-detection finds nothing
+  camera_scan_max: 5       # Probe indices 0..N for available cameras on startup
+  default_model: "yolov8n"
