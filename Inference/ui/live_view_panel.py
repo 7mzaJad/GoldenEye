@@ -10,8 +10,8 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QFrame, QSizePolicy
 
 
-class CameraPanel(QFrame):
-    """Live camera preview widget with detection overlay."""
+class LiveViewPanel(QFrame):
+    """Live preview widget with detection overlay."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,7 +24,7 @@ class CameraPanel(QFrame):
         layout.setSpacing(8)
 
         # Section header
-        header = QLabel("⦿  Live Camera Feed")
+        header = QLabel("⦿  Live Detection Feed")
         header.setObjectName("section-header")
         layout.addWidget(header)
 
@@ -36,7 +36,7 @@ class CameraPanel(QFrame):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._display.setMinimumSize(480, 360)
-        self._display.setText("Camera Off\n\nPress 'Start Camera' to begin")
+        self._display.setText("Live Feed Off\n\nPress 'Start Capture' to begin")
         layout.addWidget(self._display)
 
     def update_frame(self, frame: np.ndarray) -> None:
@@ -56,7 +56,7 @@ class CameraPanel(QFrame):
         )
         self._display.setPixmap(scaled)
 
-    def show_placeholder(self, text: str = "Camera Off\n\nPress 'Start Camera' to begin") -> None:
+    def show_placeholder(self, text: str = "Live Feed Off\n\nPress 'Start Capture' to begin") -> None:
         """Reset display to placeholder text."""
         self._display.clear()
         self._display.setText(text)

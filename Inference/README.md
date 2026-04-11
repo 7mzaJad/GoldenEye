@@ -1,6 +1,6 @@
 # GoldenEye — Real-Time Search and Rescue Human Detection Interface
 
-This project is a real-time Search and Rescue (SAR) human detection system designed to help locate lost people in desert environments using ONNX-based object detection models, with emphasis on detecting small and distant human targets. It provides a professional desktop application interface for live camera feeds and uploaded image prediction.
+This project is a real-time Search and Rescue (SAR) human detection system designed to help locate lost people in desert environments using ONNX-based object detection models, with emphasis on detecting small and distant human targets. It provides a professional desktop application interface for live camera feeds, live screen capture, and uploaded image prediction.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![PySide6](https://img.shields.io/badge/PySide6-6.6+-green)
@@ -11,11 +11,12 @@ This project is a real-time Search and Rescue (SAR) human detection system desig
 ## Features
 
 - **Live Camera Detection** — Real-time inference on webcam feed
-- **Image Upload** — Single-image prediction with bounding box overlay
-- **Dual Model Support** — Switch between YOLOv8n and YOLOv26 at runtime
+- **Live Screen Capture** — Real-time detection directly off connected displays
+- **Image Upload Integration** — Choose between hardware camera stream or uploading a single `.jpg`/`.png`
+- **Dynamic Source UI** — Instantly scan and toggle between connected webcams, iPhones (Continuity), and local displays
+- **Dual Model Support** — Switch between available tracking models at runtime
 - **Adjustable Thresholds** — Confidence and IoU sliders
-- **Performance Metrics** — Inference latency, FPS, detection count
-- **Non-Blocking UI** — Threaded inference pipeline with frame skipping
+- **Performance Metrics** — Inference latency, FPS, and human presence summation
 - **Professional Dark Theme** — Gold-accented UI suitable for demo presentations
 
 ---

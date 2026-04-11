@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QSlider, QSizePolicy,
+    QRadioButton, QButtonGroup
 )
 
 
@@ -14,20 +15,22 @@ class ControlsPanel(QFrame):
     """Application controls: model selection, thresholds, camera buttons."""
 
     # Signals emitted on user interaction
-    start_camera = Signal()
-    stop_camera = Signal()
+    start_capture = Signal()
+    stop_capture = Signal()
     model_changed = Signal(str)           # model key
-    camera_changed = Signal(int)          # camera device index
+    device_changed = Signal(int)          # shared index for camera/monitor
+    source_changed = Signal(str)          # 'camera' or 'screen'
     conf_threshold_changed = Signal(float)
     iou_threshold_changed = Signal(float)
 
     def __init__(self, model_keys: list[str], defaults: dict,
-                 cameras: list | None = None, parent=None):
+                 devices: list | None = None, parent=None):
         super().__init__(parent)
         self.setObjectName("card")
         self._model_keys = model_keys
         self._defaults = defaults
-        self._cameras = cameras or []
+        self._devices = devices or []
+        self._current_source = "camera"
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -46,6 +49,23 @@ class ControlsPanel(QFrame):
 
         self._add_separator(layout)
 
+        # ── Input Source ───────────────────────────────────────────────
+        layout.addWidget(self._make_label("Input Source"))
+        
+        self._source_group = QButtonGroup(self)
+        self._radio_camera = QRadioButton("Camera")
+        self._radio_camera.setChecked(True)
+        self._radio_screen = QRadioButton("Screen")
+        
+        self._source_group.addButton(self._radio_camera, 0)
+        self._source_group.addButton(self._radio_screen, 1)
+        self._source_group.idToggled.connect(self._on_source_toggled)
+
+        source_row = QHBoxLayout()
+        source_row.addWidget(self._radio_camera)
+        source_row.addWidget(self._radio_screen)
+        layout.addLayout(source_row)
+
         # ── Model Selector ─────────────────────────────────────────────
         layout.addWidget(self._make_label("Model"))
         self._model_combo = QComboBox()
@@ -56,14 +76,15 @@ class ControlsPanel(QFrame):
 
         self._add_separator(layout)
 
-        # ── Camera Controls ────────────────────────────────────────────
-        layout.addWidget(self._make_label("Camera"))
+        # ── Device Controls ────────────────────────────────────────────
+        self._device_label = self._make_label("Camera Device")
+        layout.addWidget(self._device_label)
 
-        # Camera device selector
-        self._camera_combo = QComboBox()
-        self._populate_camera_combo()
-        self._camera_combo.currentIndexChanged.connect(self._on_camera_changed)
-        layout.addWidget(self._camera_combo)
+        # Device selector
+        self._device_combo = QComboBox()
+        self._populate_device_combo()
+        self._device_combo.currentIndexChanged.connect(self._on_device_changed)
+        layout.addWidget(self._device_combo)
 
         # Refresh button (re-scan devices)
         self._refresh_btn = QPushButton("⟳  Rescan Devices")
@@ -74,17 +95,17 @@ class ControlsPanel(QFrame):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._start_btn = QPushButton("▶  Start")
+        self._start_btn = QPushButton("▶  Start Capture")
         self._start_btn.setObjectName("primary")
         self._start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._start_btn.clicked.connect(self.start_camera.emit)
+        self._start_btn.clicked.connect(self.start_capture.emit)
         btn_row.addWidget(self._start_btn)
 
-        self._stop_btn = QPushButton("■  Stop")
+        self._stop_btn = QPushButton("■  Stop Capture")
         self._stop_btn.setObjectName("danger")
         self._stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self.stop_camera.emit)
+        self._stop_btn.clicked.connect(self.stop_capture.emit)
         btn_row.addWidget(self._stop_btn)
 
         layout.addLayout(btn_row)
@@ -131,11 +152,14 @@ class ControlsPanel(QFrame):
 
     # ── Public API ─────────────────────────────────────────────────────
 
-    def set_camera_running(self, running: bool) -> None:
+    def set_capture_running(self, running: bool) -> None:
         self._start_btn.setEnabled(not running)
         self._stop_btn.setEnabled(running)
-        self._camera_combo.setEnabled(not running)
+        self._device_combo.setEnabled(not running)
         self._refresh_btn.setEnabled(not running)
+        self._radio_camera.setEnabled(not running)
+        self._radio_screen.setEnabled(not running)
+        
         self._update_status(
             self._status_camera,
             "Active" if running else "Inactive",
@@ -161,30 +185,26 @@ class ControlsPanel(QFrame):
         self._update_status(self._status_model, "Loading…", "inactive")
 
     @property
-    def selected_camera_index(self) -> int:
-        """Return the device index of the currently selected camera."""
-        data = self._camera_combo.currentData()
-        return data if data is not None else 0
+    def selected_device_index(self) -> int:
+        """Return the device/monitor index of the currently selected source."""
+        data = self._device_combo.currentData()
+        return data if data is not None else -1
 
     @property
     def refresh_button(self) -> QPushButton:
         """Expose the rescan button so MainWindow can connect to it."""
         return self._refresh_btn
 
-    def set_cameras(self, cameras: list) -> None:
-        """Update the camera dropdown with a new device list.
+    def set_devices(self, devices: list) -> None:
+        """Update the device dropdown with a new device list."""
+        self._devices = devices
+        self._populate_device_combo()
 
-        Args:
-            cameras: List of CameraDevice objects from scan_cameras().
-        """
-        self._cameras = cameras
-        self._populate_camera_combo()
-
-    def select_camera_index(self, index: int) -> None:
-        """Programmatically select a camera by device index."""
-        for i in range(self._camera_combo.count()):
-            if self._camera_combo.itemData(i) == index:
-                self._camera_combo.setCurrentIndex(i)
+    def select_device_index(self, index: int) -> None:
+        """Programmatically select a device by index."""
+        for i in range(self._device_combo.count()):
+            if self._device_combo.itemData(i) == index:
+                self._device_combo.setCurrentIndex(i)
                 return
 
     @property
@@ -201,10 +221,19 @@ class ControlsPanel(QFrame):
         key = self._model_combo.itemData(index)
         self.model_changed.emit(key)
 
-    def _on_camera_changed(self, index: int) -> None:
-        data = self._camera_combo.itemData(index)
+    def _on_device_changed(self, index: int) -> None:
+        data = self._device_combo.itemData(index)
         if data is not None:
-            self.camera_changed.emit(data)
+            self.device_changed.emit(data)
+
+    def _on_source_toggled(self, btn_id: int, checked: bool) -> None:
+        if checked:
+            new_source = "camera" if btn_id == 0 else "screen"
+            if new_source != self._current_source:
+                self._current_source = new_source
+                self._device_label.setText("Camera Device" if new_source == "camera" else "Display Monitor")
+                self._status_camera["value"].setText("Camera:" if new_source == "camera" else "Screen capture:")
+                self.source_changed.emit(new_source)
 
     def _on_conf_changed(self, value: int) -> None:
         fval = value / 100.0
@@ -216,16 +245,17 @@ class ControlsPanel(QFrame):
         self._iou_label.setText(f"IoU (NMS): {fval:.0%}")
         self.iou_threshold_changed.emit(fval)
 
-    def _populate_camera_combo(self) -> None:
-        """Fill the camera dropdown from the current device list."""
-        self._camera_combo.blockSignals(True)
-        self._camera_combo.clear()
-        if self._cameras:
-            for dev in self._cameras:
-                self._camera_combo.addItem(dev.display_name, dev.index)
+    def _populate_device_combo(self) -> None:
+        """Fill the generic device dropdown from the current list."""
+        self._device_combo.blockSignals(True)
+        self._device_combo.clear()
+        if self._devices:
+            for dev in self._devices:
+                self._device_combo.addItem(dev.display_name, dev.index)
         else:
-            self._camera_combo.addItem("No cameras found", -1)
-        self._camera_combo.blockSignals(False)
+            msg = "No cameras found" if self._current_source == "camera" else "No screens found"
+            self._device_combo.addItem(msg, -1)
+        self._device_combo.blockSignals(False)
 
     @staticmethod
     def _make_label(text: str) -> QLabel:

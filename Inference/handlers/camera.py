@@ -19,36 +19,9 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
+from utils.buffer import FrameBuffer
+
 logger = logging.getLogger(__name__)
-
-
-# ── Thread-Safe Frame Buffer ─────────────────────────────────────────────
-
-class FrameBuffer:
-    """A thread-safe single-slot container for the latest camera frame.
-    
-    Prevents unbounded queue growth by purely overwriting the previous frame.
-    """
-    def __init__(self):
-        self._mutex = QMutex()
-        self._frame: np.ndarray | None = None
-
-    def put(self, frame: np.ndarray) -> None:
-        """Write the latest frame, destroying the previous one."""
-        with QMutexLocker(self._mutex):
-            self._frame = frame
-
-    def get(self) -> np.ndarray | None:
-        """Retrieve the latest frame and clear the slot."""
-        with QMutexLocker(self._mutex):
-            frame = self._frame
-            self._frame = None
-            return frame
-
-    def clear(self) -> None:
-        """Clear the buffer."""
-        with QMutexLocker(self._mutex):
-            self._frame = None
 
 # Keywords that identify an iPhone / Continuity Camera device
 _IPHONE_KEYWORDS = ("iphone", "continuity", "ios", "apple")
@@ -233,4 +206,4 @@ class CameraThread(QThread):
         """Signal the capture loop to exit and wait for thread to finish."""
         with QMutexLocker(self._mutex):
             self._running = False
-        self.wait(timeout=3000)
+        self.wait(3000)
