@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MonitorDevice:
     """Represents a detected monitor."""
+
     index: int
     name: str
     mss_monitor_dict: dict
@@ -46,13 +47,20 @@ class ScreenThread(QThread):
     frame_ready = Signal()
     error = Signal(str)
 
-    def __init__(self, monitor_dict: dict, buffer: FrameBuffer, fps: int = 30, parent=None):
+    def __init__(
+        self, monitor_dict: dict, buffer: FrameBuffer, fps: int = 30, parent=None
+    ):
         super().__init__(parent)
         self._monitor = monitor_dict
         self._buffer = buffer
         self._running = False
         self._mutex = QMutex()
         self._target_interval = 1.0 / fps
+
+    @property
+    def is_running(self) -> bool:
+        with QMutexLocker(self._mutex):
+            return self._running
 
     def run(self) -> None:
         with QMutexLocker(self._mutex):
@@ -64,23 +72,23 @@ class ScreenThread(QThread):
             with mss.mss() as sct:
                 while True:
                     t0 = time.perf_counter()
-                    
+
                     with QMutexLocker(self._mutex):
                         if not self._running:
                             break
-                    
+
                     # Capture screen
                     sct_img = sct.grab(self._monitor)
-                    
+
                     # Convert to numpy array (BGRA)
                     img = np.array(sct_img)
-                    
+
                     # Convert BGRA to BGR to match OpenCV camera format
                     frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-                    
+
                     self._buffer.put(frame)
                     self.frame_ready.emit()
-                    
+
                     # Throttle to max target FPS
                     elapsed = time.perf_counter() - t0
                     sleep_time = self._target_interval - elapsed

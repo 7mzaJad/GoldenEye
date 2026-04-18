@@ -13,11 +13,12 @@ import logging
 # Ensure the Inference directory is on the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from ui.main_window import MainWindow
+from utils.config_loader import ConfigError
 from utils.constants import APP_NAME, APP_VERSION
 
 # Configure logging
@@ -47,7 +48,13 @@ def main() -> int:
     app.setFont(font)
 
     # Launch main window
-    window = MainWindow()
+    try:
+        window = MainWindow()
+    except ConfigError as e:
+        logger.error(f"Configuration error: {e}")
+        QMessageBox.critical(None, "Configuration Error", str(e))
+        return 1
+
     window.show()
 
     logger.info("Application window opened")

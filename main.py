@@ -13,33 +13,29 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from config import (
-    EPOCHS, BATCH_SIZE, IMG_SIZE, DEVICE, DATA_YAML,
-    LOGS_DIR, MODELS_DIR
-)
+from config import BATCH_SIZE, DATA_YAML, DEVICE, EPOCHS, IMG_SIZE, LOGS_DIR, MODEL_TYPE
 from train import train_yolo
 from inference import YOLOInference
 from data_loader import get_dataset_info
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     """Main entry point for the GoldenEye pipeline."""
-    
+
     logger.info("=" * 80)
     logger.info("GoldenEye - YOLO Object Detection for SAR")
     logger.info("=" * 80)
-    
+
     # Show dataset information
     logger.info("\nDataset Information:")
     dataset_info = get_dataset_info()
-    if dataset_info['is_valid']:
+    if dataset_info["is_valid"]:
         logger.info(f"✓ Dataset is valid")
         logger.info(f"  Total samples: {dataset_info['samples']['total']}")
         logger.info(f"  Train: {dataset_info['samples']['train']}")
@@ -47,13 +43,15 @@ def main():
         logger.info(f"  Test: {dataset_info['samples']['test']}")
     else:
         logger.error("✗ Dataset structure is invalid. Please check your dataset.")
+        for error in dataset_info.get("errors", []):
+            logger.error(f"  - {error}")
         return
-    
+
     # Train YOLO model
     logger.info("\n" + "=" * 80)
     logger.info("TRAINING YOLOv8 MODEL")
     logger.info("=" * 80)
-    
+
     try:
         model = train_yolo(
             data_yaml=DATA_YAML,
@@ -61,18 +59,18 @@ def main():
             batch_size=BATCH_SIZE,
             img_size=IMG_SIZE,
             device=DEVICE,
-            model_type="n"
+            model_type=MODEL_TYPE,
         )
         logger.info("✓ Training completed successfully!")
     except Exception as e:
         logger.error(f"✗ Training failed: {str(e)}")
         return
-    
+
     # Run inference on test set
     logger.info("\n" + "=" * 80)
     logger.info("RUNNING INFERENCE ON TEST SET")
     logger.info("=" * 80)
-    
+
     try:
         test_dir = Path(__file__).parent / "Dataset" / "test" / "images"
         if test_dir.exists():
@@ -83,7 +81,7 @@ def main():
             logger.warning(f"Test directory not found: {test_dir}")
     except Exception as e:
         logger.error(f"✗ Inference failed: {str(e)}")
-    
+
     logger.info("\n" + "=" * 80)
     logger.info("Pipeline completed successfully!")
     logger.info(f"Results saved to: {LOGS_DIR}")

@@ -8,6 +8,24 @@ This project is a real-time Search and Rescue (SAR) human detection system desig
 
 ---
 
+## Repository Context
+
+This folder contains the desktop inference application only.
+
+If you are working on the web stack, use:
+
+- `../src/api_server.py` for backend API
+- `../frontend/` for React UI
+
+If you are working on root-model training/evaluation, use:
+
+- `../main.py`
+- `../src/`
+
+Start from `../README.md` for full project onboarding.
+
+---
+
 ## Features
 
 - **Live Camera Detection** — Real-time inference on webcam feed
@@ -32,14 +50,13 @@ pip install -r requirements.txt
 
 > **Note (macOS):** On macOS with Apple Silicon, `onnxruntime` will automatically
 > use the CoreML execution provider for hardware acceleration.
-
 > **Note (Windows/Linux):** For maximum performance on 4K camera feeds or heavy simulations, install `onnxruntime-gpu` instead of the standard `onnxruntime`. The application engine will automatically detect your NVIDIA GPU and configure the **CUDA Execution Provider** fallback!
 
 ### 2. Verify Model Files
 
 Ensure your ONNX model files are in place:
 
-```
+```text
 models/
 ├── Yolov8n/
 │   └── best.onnx    ← YOLOv8 Nano model
@@ -105,7 +122,7 @@ class_names:
 
 ## Project Structure
 
-```
+```text
 Inference/
 ├── main.py                 # Application entry point
 ├── config.yaml             # Model paths, classes, thresholds
@@ -120,7 +137,7 @@ Inference/
 │   └── image.py            # Image upload + prediction
 ├── ui/
 │   ├── main_window.py      # Main window orchestration
-│   ├── camera_panel.py     # Live camera preview
+│   ├── live_view_panel.py  # Live camera preview
 │   ├── upload_panel.py     # Image upload section
 │   ├── controls_panel.py   # Model selector, sliders, status
 │   ├── results_panel.py    # Detection table + stats
@@ -138,11 +155,13 @@ Inference/
 The postprocessor auto-selects decoding logic based on `type` in config:
 
 ### YOLOv8 (`type: "yolov8"`)
+
 - **Output shape:** `[1, 4+num_classes, 8400]`
 - **Format:** `[cx, cy, w, h, class_scores...]` per anchor
 - **Requires:** Confidence filtering + Non-Maximum Suppression
 
 ### YOLOv26 (`type: "yolov26"`)
+
 - **Output shape:** `[1, 300, 6]`
 - **Format:** `[x1, y1, x2, y2, confidence, class_id]` per detection
 - **NMS-free:** Post-processed by the model itself
@@ -151,6 +170,7 @@ The postprocessor auto-selects decoding logic based on `type` in config:
 
 If your ONNX model has a different output format, edit
 `core/postprocessing.py`. The decoding logic is isolated in:
+
 - `_postprocess_yolov8()` — for standard YOLO outputs
 - `_postprocess_yolov26()` — for NMS-free outputs
 
@@ -158,10 +178,10 @@ If your ONNX model has a different output format, edit
 
 ## Adjusting Thresholds
 
-| Parameter | Range | Default | Effect |
-|-----------|-------|---------|--------|
-| Confidence | 5–95% | 25% | Higher = fewer but more certain detections |
-| IoU (NMS) | 10–95% | 45% | Higher = more overlapping boxes allowed |
+| Parameter  | Range  | Default | Effect                                      |
+| ---------- | ------ | ------- | ------------------------------------------- |
+| Confidence | 5-95%  | 25%     | Higher = fewer but more certain detections  |
+| IoU (NMS)  | 10-95% | 45%     | Higher = more overlapping boxes allowed     |
 
 Both can be adjusted in real-time via the UI sliders.
 
@@ -179,13 +199,11 @@ Both can be adjusted in real-time via the UI sliders.
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| "Cannot access camera" | Check camera permissions in System Settings → Privacy |
-| "Model file not found" | Verify paths in `config.yaml` relative to `Inference/` |
-| Slow inference | Ensure `onnxruntime` (not `onnxruntime-gpu`) is installed on CPU-only machines |
-| Window too small | Resize the window; minimum is 1100×700 |
-| Black camera feed | Try changing `camera_index` in config to `1` or `2` |
+- **"Cannot access camera"**: Check camera permissions in System Settings -> Privacy.
+- **"Model file not found"**: Verify paths in `config.yaml` relative to `Inference/`.
+- **Slow inference**: Ensure `onnxruntime` (not `onnxruntime-gpu`) is installed on CPU-only machines.
+- **Window too small**: Resize the window; minimum is 1100x700.
+- **Black camera feed**: Try changing `camera_index` in config to `1` or `2`.
 
 ---
 

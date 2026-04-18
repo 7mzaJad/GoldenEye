@@ -7,12 +7,25 @@ import logging
 import time
 from collections import deque
 
-import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, Signal, QObject, Slot, QTimer
+from PySide6.QtCore import (
+    Qt,
+    QThread,
+    Signal,
+    QObject,
+    Slot,
+    QTimer,
+    QMutex,
+    QMutexLocker,
+    QCoreApplication,
+)
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QSplitter, QStatusBar, QMessageBox,
+    QMainWindow,
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QStatusBar,
+    QMessageBox,
 )
 
 from core.engine import InferenceEngine
@@ -20,9 +33,14 @@ from handlers.camera import CameraThread, scan_cameras, get_preferred_camera
 from handlers.screen import ScreenThread, scan_monitors
 from handlers.image import ImageHandler
 from utils.buffer import FrameBuffer
-from utils.config_loader import load_config, resolve_model_path
-from utils.drawing import draw_detections, Detection
-from utils.constants import WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
+from utils.config_loader import ConfigError, load_config, resolve_model_path
+from utils.drawing import draw_detections
+from utils.constants import (
+    WINDOW_WIDTH,
+    WINDOW_HEIGHT,
+    WINDOW_MIN_WIDTH,
+    WINDOW_MIN_HEIGHT,
+)
 
 from ui.live_view_panel import LiveViewPanel
 from ui.upload_panel import UploadPanel
@@ -34,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Inference Worker (runs in a separate thread) ──────────────────────────
+
 
 class InferenceWorker(QObject):
     """Runs ONNX inference in a background thread.
@@ -52,33 +71,48 @@ class InferenceWorker(QObject):
         self._conf_threshold = 0.25
         self._iou_threshold = 0.45
         self._busy = False
+        self._state_mutex = QMutex()
 
-    def set_engine(self, engine: InferenceEngine) -> None:
-        self._engine = engine
+    def set_engine(self, engine: InferenceEngine | None) -> None:
+        with QMutexLocker(self._state_mutex):
+            self._engine = engine
 
     def set_thresholds(self, conf: float, iou: float) -> None:
-        self._conf_threshold = conf
-        self._iou_threshold = iou
+        with QMutexLocker(self._state_mutex):
+            self._conf_threshold = conf
+            self._iou_threshold = iou
 
     @property
     def is_busy(self) -> bool:
-        return self._busy
+        with QMutexLocker(self._state_mutex):
+            return self._busy
 
     @Slot()
     def trigger_inference(self) -> None:
         """Run inference on the newest frame from the buffer, dropping intermediate ones."""
-        if self._busy or self._engine is None or not self._engine.is_loaded:
-            return
+        with QMutexLocker(self._state_mutex):
+            if self._busy:
+                return
+
+            engine = self._engine
+            conf_threshold = self._conf_threshold
+            iou_threshold = self._iou_threshold
+
+            if engine is None or not engine.is_loaded:
+                return
+
+            self._busy = True
 
         # Fetch latest frame, which clears the buffer. If None, we've already processed it.
         frame = self._buffer.get()
         if frame is None:
+            with QMutexLocker(self._state_mutex):
+                self._busy = False
             return
 
-        self._busy = True
         try:
-            detections, inference_ms = self._engine.predict(
-                frame, self._conf_threshold, self._iou_threshold
+            detections, inference_ms = engine.predict(
+                frame, conf_threshold, iou_threshold
             )
             annotated = frame.copy()
             draw_detections(annotated, detections)
@@ -86,10 +120,12 @@ class InferenceWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
         finally:
-            self._busy = False
+            with QMutexLocker(self._state_mutex):
+                self._busy = False
 
 
 # ── Main Window ───────────────────────────────────────────────────────────
+
 
 class MainWindow(QMainWindow):
     """GoldenEye main application window."""
@@ -110,14 +146,16 @@ class MainWindow(QMainWindow):
         self._screen_thread: ScreenThread | None = None
         self._image_handler: ImageHandler | None = None
         self._fps_times: deque[float] = deque(maxlen=30)
-        
-        self._cameras: list = []           
+
+        self._cameras: list = []
         self._monitors: list = []
         self._current_source: str = "camera"
         self._selected_cam_index: int = 0
         self._selected_monitor_index: int = 0
-        
-        self._frame_buffer = FrameBuffer() # Single-slot overwrite buffer for zero latency
+
+        self._frame_buffer = (
+            FrameBuffer()
+        )  # Single-slot overwrite buffer for zero latency
 
         # Apply stylesheet
         self.setStyleSheet(MAIN_STYLESHEET)
@@ -210,6 +248,12 @@ class MainWindow(QMainWindow):
         # Stop capture while switching models
         self._stop_capture()
 
+        # Ensure no inference call is still touching the old session
+        self._wait_for_worker_idle()
+
+        # Detach old model from worker before unloading it
+        self._worker.set_engine(None)
+
         # Unload previous engine
         if self._engine:
             self._engine.unload()
@@ -228,6 +272,10 @@ class MainWindow(QMainWindow):
 
             # Update worker
             self._worker.set_engine(self._engine)
+            self._worker.set_thresholds(
+                self._controls.confidence_threshold,
+                self._controls.iou_threshold,
+            )
             self._image_handler = ImageHandler(self._engine)
 
             self._controls.set_model_loaded(True, model_key.upper())
@@ -235,12 +283,14 @@ class MainWindow(QMainWindow):
                 f"Model loaded: {model_key.upper()} — Ready for detection"
             )
 
-        except (FileNotFoundError, RuntimeError) as e:
+        except (ConfigError, FileNotFoundError, RuntimeError, KeyError) as e:
+            self._engine = None
+            self._image_handler = None
+            self._worker.set_engine(None)
             self._controls.set_model_loaded(False)
             self._statusbar.showMessage("Model loading failed")
             QMessageBox.critical(
-                self, "Model Error",
-                f"Failed to load model '{model_key}':\n\n{e}"
+                self, "Model Error", f"Failed to load model '{model_key}':\n\n{e}"
             )
 
     # ── Capture Controls ───────────────────────────────────────────────
@@ -248,40 +298,42 @@ class MainWindow(QMainWindow):
     def _start_capture(self) -> None:
         if not self._engine or not self._engine.is_loaded:
             QMessageBox.warning(
-                self, "No Model",
-                "Please load a model before starting capture."
+                self, "No Model", "Please load a model before starting capture."
             )
             return
 
         idx = self._controls.selected_device_index
         if idx < 0:
             QMessageBox.warning(
-                self, "No Device",
-                "No device selected.\nClick 'Rescan Devices' to detect sources."
+                self,
+                "No Device",
+                "No device selected.\nClick 'Rescan Devices' to detect sources.",
             )
             return
 
         self._frame_buffer.clear()
-        
+
         dev_name = "Unknown"
         if self._current_source == "camera":
             self._camera_thread = CameraThread(idx, self._frame_buffer)
             self._camera_thread.frame_ready.connect(self._on_live_frame)
             self._camera_thread.error.connect(self._on_capture_error)
             self._camera_thread.start()
-            
+
             dev_name = f"Camera {idx}"
             for dev in self._cameras:
-                if dev.index == idx: dev_name = dev.name; break
+                if dev.index == idx:
+                    dev_name = dev.name
+                    break
         else:
             mon_dict = {}
             dev_name = f"Display {idx}"
             for dev in self._monitors:
-                if dev.index == idx: 
+                if dev.index == idx:
                     dev_name = dev.name
                     mon_dict = dev.mss_monitor_dict
                     break
-            
+
             self._screen_thread = ScreenThread(mon_dict, self._frame_buffer)
             self._screen_thread.frame_ready.connect(self._on_live_frame)
             self._screen_thread.error.connect(self._on_capture_error)
@@ -300,7 +352,7 @@ class MainWindow(QMainWindow):
             self._camera_thread.frame_ready.disconnect(self._on_live_frame)
             self._camera_thread.stop()
             self._camera_thread = None
-            
+
         if self._screen_thread:
             self._screen_thread.frame_ready.disconnect(self._on_live_frame)
             self._screen_thread.stop()
@@ -354,8 +406,7 @@ class MainWindow(QMainWindow):
         """Run prediction on an uploaded image."""
         if not self._image_handler:
             QMessageBox.warning(
-                self, "No Model",
-                "Please load a model before uploading an image."
+                self, "No Model", "Please load a model before uploading an image."
             )
             return
 
@@ -369,8 +420,14 @@ class MainWindow(QMainWindow):
             )
             self._upload_panel.show_result(annotated, len(detections), inference_ms)
 
-            # Also update results panel if camera is not running
-            if not (self._camera_thread and self._camera_thread.is_running):
+            # Only update stats panel from image inference when no live source is running.
+            camera_running = (
+                self._camera_thread is not None and self._camera_thread.is_running
+            )
+            screen_running = (
+                self._screen_thread is not None and self._screen_thread.is_running
+            )
+            if not (camera_running or screen_running):
                 self._results.update_results(detections, inference_ms)
                 self._statusbar.showMessage(
                     f"Image prediction: {len(detections)} detections "
@@ -405,7 +462,9 @@ class MainWindow(QMainWindow):
             self._selected_cam_index = index
         else:
             self._selected_monitor_index = index
-        logger.info(f"{self._current_source.capitalize()} selection changed to index {index}")
+        logger.info(
+            f"{self._current_source.capitalize()} selection changed to index {index}"
+        )
 
     # ── Camera Scanning ─────────────────────────────────────────────
 
@@ -435,7 +494,7 @@ class MainWindow(QMainWindow):
     def _rescan_devices(self) -> None:
         """Re-scan current source devices and refresh the dropdown."""
         self._statusbar.showMessage("Scanning devices…")
-        
+
         if self._current_source == "camera":
             self._scan_cameras()
             self._controls.set_devices(self._cameras)
@@ -447,15 +506,25 @@ class MainWindow(QMainWindow):
             self._controls.select_device_index(self._selected_monitor_index)
             count = len(self._monitors)
 
-        self._statusbar.showMessage(
-            f"Found {count} device{'s' if count != 1 else ''}"
-        )
+        self._statusbar.showMessage(f"Found {count} device{'s' if count != 1 else ''}")
+
+    def _wait_for_worker_idle(self, timeout_s: float = 2.0) -> None:
+        """Give the worker a short grace period to finish an in-flight inference."""
+        deadline = time.perf_counter() + timeout_s
+        while self._worker.is_busy and time.perf_counter() < deadline:
+            QCoreApplication.processEvents()
+            time.sleep(0.01)
+
+        if self._worker.is_busy:
+            logger.warning("Inference worker did not become idle before timeout")
 
     # ── Cleanup ────────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
         """Clean up threads and resources on window close."""
         self._stop_capture()
+        self._wait_for_worker_idle()
+        self._worker.set_engine(None)
 
         self._worker_thread.quit()
         self._worker_thread.wait(3000)

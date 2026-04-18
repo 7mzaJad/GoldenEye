@@ -5,9 +5,16 @@ confidence/IoU sliders, and status indicators.
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QComboBox, QSlider, QSizePolicy,
-    QRadioButton, QButtonGroup
+    QFrame,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QComboBox,
+    QSlider,
+    QSizePolicy,
+    QRadioButton,
+    QButtonGroup,
 )
 
 
@@ -17,14 +24,19 @@ class ControlsPanel(QFrame):
     # Signals emitted on user interaction
     start_capture = Signal()
     stop_capture = Signal()
-    model_changed = Signal(str)           # model key
-    device_changed = Signal(int)          # shared index for camera/monitor
-    source_changed = Signal(str)          # 'camera' or 'screen'
+    model_changed = Signal(str)  # model key
+    device_changed = Signal(int)  # shared index for camera/monitor
+    source_changed = Signal(str)  # 'camera' or 'screen'
     conf_threshold_changed = Signal(float)
     iou_threshold_changed = Signal(float)
 
-    def __init__(self, model_keys: list[str], defaults: dict,
-                 devices: list | None = None, parent=None):
+    def __init__(
+        self,
+        model_keys: list[str],
+        defaults: dict,
+        devices: list | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setObjectName("card")
         self._model_keys = model_keys
@@ -51,12 +63,12 @@ class ControlsPanel(QFrame):
 
         # ── Input Source ───────────────────────────────────────────────
         layout.addWidget(self._make_label("Input Source"))
-        
+
         self._source_group = QButtonGroup(self)
         self._radio_camera = QRadioButton("Camera")
         self._radio_camera.setChecked(True)
         self._radio_screen = QRadioButton("Screen")
-        
+
         self._source_group.addButton(self._radio_camera, 0)
         self._source_group.addButton(self._radio_screen, 1)
         self._source_group.idToggled.connect(self._on_source_toggled)
@@ -159,7 +171,7 @@ class ControlsPanel(QFrame):
         self._refresh_btn.setEnabled(not running)
         self._radio_camera.setEnabled(not running)
         self._radio_screen.setEnabled(not running)
-        
+
         self._update_status(
             self._status_camera,
             "Active" if running else "Inactive",
@@ -231,8 +243,13 @@ class ControlsPanel(QFrame):
             new_source = "camera" if btn_id == 0 else "screen"
             if new_source != self._current_source:
                 self._current_source = new_source
-                self._device_label.setText("Camera Device" if new_source == "camera" else "Display Monitor")
-                self._status_camera["value"].setText("Camera:" if new_source == "camera" else "Screen capture:")
+                self._device_label.setText(
+                    "Camera Device" if new_source == "camera" else "Display Monitor"
+                )
+                self._status_camera["label"].setText(
+                    "Camera:" if new_source == "camera" else "Screen:"
+                )
+                self._update_status(self._status_camera, "Inactive", "inactive")
                 self.source_changed.emit(new_source)
 
     def _on_conf_changed(self, value: int) -> None:
@@ -253,7 +270,11 @@ class ControlsPanel(QFrame):
             for dev in self._devices:
                 self._device_combo.addItem(dev.display_name, dev.index)
         else:
-            msg = "No cameras found" if self._current_source == "camera" else "No screens found"
+            msg = (
+                "No cameras found"
+                if self._current_source == "camera"
+                else "No screens found"
+            )
             self._device_combo.addItem(msg, -1)
         self._device_combo.blockSignals(False)
 
@@ -283,7 +304,7 @@ class ControlsPanel(QFrame):
         row.addWidget(value)
         row.addStretch()
 
-        return {"layout": row, "dot": dot, "value": value}
+        return {"layout": row, "dot": dot, "label": label, "value": value}
 
     @staticmethod
     def _update_status(status: dict, text: str, state: str) -> None:

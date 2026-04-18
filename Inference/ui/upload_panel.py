@@ -8,8 +8,13 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QLabel, QVBoxLayout, QHBoxLayout, QFrame,
-    QPushButton, QFileDialog, QSizePolicy,
+    QLabel,
+    QVBoxLayout,
+    QHBoxLayout,
+    QFrame,
+    QPushButton,
+    QFileDialog,
+    QSizePolicy,
 )
 
 
@@ -70,12 +75,14 @@ class UploadPanel(QFrame):
         if file_path:
             self.image_selected.emit(file_path)
 
-    def show_result(self, annotated: np.ndarray, num_detections: int,
-                    inference_ms: float) -> None:
+    def show_result(
+        self, annotated: np.ndarray, num_detections: int, inference_ms: float
+    ) -> None:
         """Display the annotated prediction result."""
+        self._reset_display_style()
         rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
-        img = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
+        img = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(img)
         scaled = pixmap.scaled(
             self._display.size(),
@@ -105,3 +112,7 @@ class UploadPanel(QFrame):
         """Show loading state during inference."""
         self._info.setText("Running inference…")
         self._info.setStyleSheet("color: #F5BD1F;")
+
+    def _reset_display_style(self) -> None:
+        """Clear inline error styling so successful predictions use default styling."""
+        self._display.setStyleSheet("")

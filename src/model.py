@@ -1,18 +1,21 @@
-import tensorflow as tf
-from config import IMG_SIZE, NUM_CLASSES
+"""Model factory helpers for Ultralytics YOLO."""
 
-def build_model():
-    base_model = tf.keras.applications.EfficientNetB0(
-        input_shape=IMG_SIZE + (3,),
-        include_top=False,
-        weights="imagenet"
-    )
-    base_model.trainable = False
+from ultralytics import YOLO
 
-    x = base_model.output
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dense(128, activation="relu")(x)
-    output = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax")(x)
+from config import MODEL_TYPE, MODELS_DIR
 
-    model = tf.keras.Model(inputs=base_model.input, outputs=output)
-    return model
+
+def build_model(model_type: str = MODEL_TYPE, weights: str | None = None) -> YOLO:
+    """Create a YOLO model from local checkpoints or official pretrained weights."""
+    if weights:
+        return YOLO(weights)
+
+    normalized = model_type.lower().strip()
+    if normalized not in {"n", "s", "m", "l", "x"}:
+        raise ValueError(f"Unsupported YOLOv8 model type: {model_type}")
+
+    local_checkpoint = MODELS_DIR / f"Yolov8{normalized}" / "best.pt"
+    if local_checkpoint.exists():
+        return YOLO(str(local_checkpoint))
+
+    return YOLO(f"yolov8{normalized}.pt")

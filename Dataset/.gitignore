@@ -1,0 +1,7 @@
+# Keep metadata, ignore bulky raw splits by default
+train/
+valid/
+test/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
