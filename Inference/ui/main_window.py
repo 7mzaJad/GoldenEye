@@ -67,7 +67,9 @@ class InferenceWorker(QObject):
     and emits results back to the main thread.
     """
 
-    result_ready = Signal(np.ndarray, list, float, dict)  # annotated_frame, detections, ms, meta
+    result_ready = Signal(
+        np.ndarray, list, float, dict
+    )  # annotated_frame, detections, ms, meta
     error = Signal(str)
 
     def __init__(self, buffer: FrameBuffer):
