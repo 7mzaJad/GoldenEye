@@ -6,9 +6,11 @@
 models:
   yolov8n:
     path: "../models/Yolov8n/best.onnx"
+    sahi_path: "../models/Yolov8n/best.pt"
     type: "yolov8"         # Standard YOLOv8 output — requires NMS
   yolov26:
     path: "../models/Yolov26/best.onnx"
+    sahi_path: "../models/Yolov26/best.pt"
     type: "yolov26"        # NMS-free output — 300 detections × 6
 
 # Class names in order of class ID
@@ -23,3 +25,25 @@ defaults:
   camera_index: 0          # Fallback device index if auto-detection finds nothing
   camera_scan_max: 5       # Probe indices 0..N for available cameras on startup
   default_model: "yolov8n"
+
+# Inference routing controls.
+# - standard: original ONNX pipeline
+# - sahi: sliced inference mode (with safe fallback for live sources if disabled)
+inference:
+  mode: "standard"
+  enable_sahi_for_live_sources: false
+  sahi_live_every_n_frames: 5
+  fallback_to_standard_on_error: true
+
+# SAHI settings (inference-only, no training impact).
+sahi:
+  enabled: true
+  # Optional global override path for SAHI model. Leave null to use models.<key>.sahi_path.
+  model_path: null
+  slice_height: 640
+  slice_width: 640
+  overlap_height_ratio: 0.2
+  overlap_width_ratio: 0.2
+  postprocess_type: "NMM"
+  postprocess_match_metric: "IOS"
+  postprocess_match_threshold: 0.5

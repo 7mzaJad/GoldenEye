@@ -30,7 +30,8 @@ class ImageHandler:
         image_path: str,
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
-    ) -> tuple[np.ndarray, np.ndarray, list[Detection], float]:
+        inference_mode: str = "standard",
+    ) -> tuple[np.ndarray, np.ndarray, list[Detection], float, dict]:
         """Load an image and run detection.
 
         Args:
@@ -39,7 +40,7 @@ class ImageHandler:
             iou_threshold:   IoU threshold for NMS.
 
         Returns:
-            Tuple of (original_frame, annotated_frame, detections, inference_ms).
+            Tuple of (original_frame, annotated_frame, detections, inference_ms, meta).
 
         Raises:
             ValueError: If file type is unsupported or file can't be read.
@@ -62,8 +63,13 @@ class ImageHandler:
             )
 
         # Run inference
-        detections, inference_ms = self._engine.predict(
-            frame, conf_threshold, iou_threshold
+        detections, inference_ms, meta = self._engine.predict(
+            frame,
+            conf_threshold,
+            iou_threshold,
+            mode=inference_mode,
+            source_type="image",
+            return_meta=True,
         )
 
         # Draw results on a copy
@@ -71,8 +77,16 @@ class ImageHandler:
         draw_detections(annotated, detections)
 
         logger.info(
-            f"Image prediction: {path.name} → {len(detections)} detections "
-            f"in {inference_ms:.1f}ms"
+            "Image prediction: file=%s requested_mode=%s actual_mode=%s "
+            "latency_ms=%.2f detections=%d resolution=%sx%s conf=%.2f",
+            path.name,
+            meta.get("requested_mode"),
+            meta.get("actual_mode"),
+            inference_ms,
+            len(detections),
+            frame.shape[1],
+            frame.shape[0],
+            conf_threshold,
         )
 
-        return frame, annotated, detections, inference_ms
+        return frame, annotated, detections, inference_ms, meta
