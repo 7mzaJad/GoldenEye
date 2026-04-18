@@ -1,0 +1,40 @@
+name: sar_small_human_benchmark
+
+description: >
+  Benchmark YOLO model variants for small and distant human detection in
+  search-and-rescue drone scenarios. Compare model/dataset combinations with
+  reproducible training and evaluation artifacts.
+
+datasets:
+  - name: sard_default
+    data_yaml: Dataset/data.yaml
+
+models:
+  - name: yolov8n
+    weights: yolov8n.pt
+  - name: yolov8s
+    weights: yolov8s.pt
+  - name: yolov8m
+    weights: yolov8m.pt
+
+train:
+  epochs: 100
+  batch_size: 16
+  img_size: 960
+  device: auto
+  patience: 30
+  workers: 2
+  exist_ok: false
+  extra_train_args:
+    save: true
+    plots: true
+
+eval:
+  splits: [val, test]
+  primary_split: test
+  conf: 0.25
+  iou: 0.50
+  max_det: 300
+  device: auto
+  extra_eval_args:
+    verbose: false
