@@ -1,7 +1,11 @@
 # Python bytecode and caches
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 *.py[cod]
 *$py.class
+
 # Virtual environments
 .venv/
 venv/

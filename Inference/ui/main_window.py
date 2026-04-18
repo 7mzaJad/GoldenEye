@@ -6,6 +6,7 @@ and inference engine into a cohesive real-time SAR human detection interface.
 import logging
 import time
 from collections import deque
+from typing import Any
 
 import numpy as np
 from PySide6.QtCore import (
@@ -33,7 +34,12 @@ from handlers.camera import CameraThread, scan_cameras, get_preferred_camera
 from handlers.screen import ScreenThread, scan_monitors
 from handlers.image import ImageHandler
 from utils.buffer import FrameBuffer
-from utils.config_loader import ConfigError, load_config, resolve_model_path
+from utils.config_loader import (
+    ConfigError,
+    load_config,
+    resolve_model_path,
+    resolve_sahi_model_path,
+)
 from utils.drawing import draw_detections
 from utils.constants import (
     WINDOW_WIDTH,
@@ -61,7 +67,7 @@ class InferenceWorker(QObject):
     and emits results back to the main thread.
     """
 
-    result_ready = Signal(np.ndarray, list, float)  # annotated_frame, detections, ms
+    result_ready = Signal(np.ndarray, list, float, dict)  # annotated_frame, detections, ms, meta
     error = Signal(str)
 
     def __init__(self, buffer: FrameBuffer):
@@ -70,6 +76,8 @@ class InferenceWorker(QObject):
         self._engine: InferenceEngine | None = None
         self._conf_threshold = 0.25
         self._iou_threshold = 0.45
+        self._inference_mode = "standard"
+        self._source_type = "unknown"
         self._busy = False
         self._state_mutex = QMutex()
 
@@ -81,6 +89,12 @@ class InferenceWorker(QObject):
         with QMutexLocker(self._state_mutex):
             self._conf_threshold = conf
             self._iou_threshold = iou
+
+    def set_inference_mode(self, mode: str) -> None:
+        self._inference_mode = str(mode).lower().strip()
+
+    def set_source_type(self, source_type: str) -> None:
+        self._source_type = source_type
 
     @property
     def is_busy(self) -> bool:
@@ -111,12 +125,17 @@ class InferenceWorker(QObject):
             return
 
         try:
-            detections, inference_ms = engine.predict(
-                frame, conf_threshold, iou_threshold
+            detections, inference_ms, meta = engine.predict(
+                frame,
+                conf_threshold,
+                iou_threshold,
+                mode=self._inference_mode,
+                source_type=self._source_type,
+                return_meta=True,
             )
             annotated = frame.copy()
             draw_detections(annotated, detections)
-            self.result_ready.emit(annotated, detections, inference_ms)
+            self.result_ready.emit(annotated, detections, inference_ms, meta)
         except Exception as e:
             self.error.emit(str(e))
         finally:
@@ -141,11 +160,14 @@ class MainWindow(QMainWindow):
 
         # State
         self._config = load_config()
+        self._inference_cfg = self._config.get("inference", {})
         self._engine: InferenceEngine | None = None
         self._camera_thread: CameraThread | None = None
         self._screen_thread: ScreenThread | None = None
         self._image_handler: ImageHandler | None = None
         self._fps_times: deque[float] = deque(maxlen=30)
+        self._stream_log_counter = 0
+        self._requested_mode = str(self._inference_cfg.get("mode", "standard")).lower()
 
         self._cameras: list = []
         self._monitors: list = []
@@ -184,7 +206,10 @@ class MainWindow(QMainWindow):
         # ── Left: Controls Panel ───────────────────────────────────────
         model_keys = list(self._config["models"].keys())
         self._controls = ControlsPanel(
-            model_keys, self._config["defaults"], devices=self._cameras
+            model_keys,
+            self._config["defaults"],
+            devices=self._cameras,
+            inference_defaults=self._inference_cfg,
         )
         self._controls.setFixedWidth(280)
         self._controls.start_capture.connect(self._start_capture)
@@ -192,6 +217,7 @@ class MainWindow(QMainWindow):
         self._controls.model_changed.connect(self._load_model)
         self._controls.device_changed.connect(self._on_device_changed)
         self._controls.source_changed.connect(self._on_source_changed)
+        self._controls.inference_mode_changed.connect(self._on_inference_mode_changed)
         self._controls.conf_threshold_changed.connect(self._on_conf_changed)
         self._controls.iou_threshold_changed.connect(self._on_iou_changed)
         self._controls.refresh_button.clicked.connect(self._rescan_devices)
@@ -199,6 +225,7 @@ class MainWindow(QMainWindow):
         # Auto-select the preferred camera in the dropdown initially
         self._controls.set_devices(self._cameras)
         self._controls.select_device_index(self._selected_cam_index)
+        self._controls.set_inference_mode(self._requested_mode)
 
         root_layout.addWidget(self._controls)
 
@@ -237,6 +264,12 @@ class MainWindow(QMainWindow):
         self._worker.error.connect(self._on_inference_error)
 
         self._worker_thread.start()
+        self._worker.set_thresholds(
+            self._controls.confidence_threshold,
+            self._controls.iou_threshold,
+        )
+        self._worker.set_inference_mode(self._requested_mode)
+        self._worker.set_source_type(self._current_source)
 
     # ── Model Loading ──────────────────────────────────────────────────
 
@@ -261,14 +294,19 @@ class MainWindow(QMainWindow):
         try:
             model_cfg = self._config["models"][model_key]
             model_path = resolve_model_path(self._config, model_key)
+            sahi_model_path = resolve_sahi_model_path(self._config, model_key)
 
             self._engine = InferenceEngine(
                 model_path=model_path,
                 model_type=model_cfg["type"],
                 class_names=self._config["class_names"],
                 input_size=self._config["defaults"].get("input_size", 640),
+                sahi_model_path=sahi_model_path,
+                sahi_config=self._config.get("sahi", {}),
+                inference_config=self._inference_cfg,
             )
             self._engine.load()
+            self._engine.set_mode(self._requested_mode)
 
             # Update worker
             self._worker.set_engine(self._engine)
@@ -276,11 +314,12 @@ class MainWindow(QMainWindow):
                 self._controls.confidence_threshold,
                 self._controls.iou_threshold,
             )
+            self._worker.set_inference_mode(self._requested_mode)
             self._image_handler = ImageHandler(self._engine)
 
             self._controls.set_model_loaded(True, model_key.upper())
             self._statusbar.showMessage(
-                f"Model loaded: {model_key.upper()} — Ready for detection"
+                f"Model loaded: {model_key.upper()} — Mode: {self._requested_mode.upper()}"
             )
 
         except (ConfigError, FileNotFoundError, RuntimeError, KeyError) as e:
@@ -312,6 +351,7 @@ class MainWindow(QMainWindow):
             return
 
         self._frame_buffer.clear()
+        self._worker.set_source_type(self._current_source)
 
         dev_name = "Unknown"
         if self._current_source == "camera":
@@ -340,6 +380,7 @@ class MainWindow(QMainWindow):
             self._screen_thread.start()
 
         self._fps_times.clear()
+        self._stream_log_counter = 0
         self._controls.set_capture_running(True)
         self._controls.set_inference_state("running")
 
@@ -371,9 +412,13 @@ class MainWindow(QMainWindow):
         """Capture source wrote a new frame properly — trigger worker if idle."""
         self._trigger_inference.emit()
 
-    @Slot(np.ndarray, list, float)
+    @Slot(np.ndarray, list, float, dict)
     def _on_inference_result(
-        self, annotated: np.ndarray, detections: list, inference_ms: float
+        self,
+        annotated: np.ndarray,
+        detections: list,
+        inference_ms: float,
+        meta: dict,
     ) -> None:
         """Received inference results — update display."""
         # FPS calculation
@@ -387,6 +432,7 @@ class MainWindow(QMainWindow):
 
         self._live_panel.update_frame(annotated)
         self._results.update_results(detections, inference_ms, fps)
+        self._log_inference_metrics(meta, fps)
 
     @Slot(str)
     def _on_inference_error(self, message: str) -> None:
@@ -415,10 +461,14 @@ class MainWindow(QMainWindow):
         try:
             conf = self._controls.confidence_threshold
             iou = self._controls.iou_threshold
-            _, annotated, detections, inference_ms = self._image_handler.predict(
-                file_path, conf, iou
+            _, annotated, detections, inference_ms, meta = self._image_handler.predict(
+                file_path,
+                conf,
+                iou,
+                inference_mode=self._requested_mode,
             )
             self._upload_panel.show_result(annotated, len(detections), inference_ms)
+            self._log_inference_metrics(meta, fps=None, force=True)
 
             # Only update stats panel from image inference when no live source is running.
             camera_running = (
@@ -449,12 +499,25 @@ class MainWindow(QMainWindow):
     def _on_source_changed(self, source: str) -> None:
         """User switched between Camera and Screen capture modes."""
         self._current_source = source
+        self._worker.set_source_type(source)
         if source == "camera":
             self._controls.set_devices(self._cameras)
             self._controls.select_device_index(self._selected_cam_index)
         else:
             self._controls.set_devices(self._monitors)
             self._controls.select_device_index(self._selected_monitor_index)
+
+    def _on_inference_mode_changed(self, mode: str) -> None:
+        """User switched runtime inference mode between standard and SAHI."""
+        self._requested_mode = str(mode).lower().strip()
+
+        if self._engine:
+            self._engine.set_mode(self._requested_mode)
+        self._worker.set_inference_mode(self._requested_mode)
+
+        self._statusbar.showMessage(
+            f"Inference mode set to {self._requested_mode.upper()}"
+        )
 
     def _on_device_changed(self, index: int) -> None:
         """User picked a different device from the dropdown."""
@@ -465,6 +528,67 @@ class MainWindow(QMainWindow):
         logger.info(
             f"{self._current_source.capitalize()} selection changed to index {index}"
         )
+
+    def _log_inference_metrics(
+        self,
+        meta: dict[str, Any],
+        fps: float | None,
+        force: bool = False,
+    ) -> None:
+        """Log mode-aware inference metrics without changing prediction behavior.
+
+        For live streams we throttle logs to avoid excessive log volume.
+        """
+        source_type = str(meta.get("source_type", "unknown"))
+        is_live = source_type in {"camera", "screen", "video"}
+
+        if is_live and not force:
+            self._stream_log_counter += 1
+            if self._stream_log_counter % 15 != 0:
+                return
+
+        resolution = meta.get("resolution", {})
+        width = resolution.get("width", "?")
+        height = resolution.get("height", "?")
+
+        logger.info(
+            "Inference metrics: requested_mode=%s actual_mode=%s source=%s latency_ms=%.2f "
+            "fps=%s detections=%s resolution=%sx%s conf=%.2f iou=%.2f model=%s",
+            meta.get("requested_mode"),
+            meta.get("actual_mode"),
+            source_type,
+            float(meta.get("latency_ms", 0.0)),
+            f"{fps:.2f}" if fps is not None else "n/a",
+            meta.get("num_detections", 0),
+            width,
+            height,
+            float(meta.get("confidence_threshold", 0.0)),
+            float(meta.get("iou_threshold", 0.0)),
+            meta.get("model_path", ""),
+        )
+
+        fallback_reason = meta.get("fallback_reason")
+        if fallback_reason:
+            logger.info(
+                "Inference fallback: requested_mode=%s actual_mode=%s reason=%s",
+                meta.get("requested_mode"),
+                meta.get("actual_mode"),
+                fallback_reason,
+            )
+
+        if meta.get("actual_mode") == "sahi":
+            sahi = meta.get("sahi") or {}
+            logger.info(
+                "SAHI settings: slice_height=%s slice_width=%s overlap_h=%.3f overlap_w=%.3f "
+                "postprocess_type=%s postprocess_metric=%s postprocess_threshold=%.3f",
+                sahi.get("slice_height"),
+                sahi.get("slice_width"),
+                float(sahi.get("overlap_height_ratio", 0.0)),
+                float(sahi.get("overlap_width_ratio", 0.0)),
+                sahi.get("postprocess_type"),
+                sahi.get("postprocess_match_metric"),
+                float(sahi.get("postprocess_match_threshold", 0.0)),
+            )
 
     # ── Camera Scanning ─────────────────────────────────────────────
 

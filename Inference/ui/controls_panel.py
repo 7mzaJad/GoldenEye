@@ -27,6 +27,7 @@ class ControlsPanel(QFrame):
     model_changed = Signal(str)  # model key
     device_changed = Signal(int)  # shared index for camera/monitor
     source_changed = Signal(str)  # 'camera' or 'screen'
+    inference_mode_changed = Signal(str)  # 'standard' or 'sahi'
     conf_threshold_changed = Signal(float)
     iou_threshold_changed = Signal(float)
 
@@ -35,6 +36,7 @@ class ControlsPanel(QFrame):
         model_keys: list[str],
         defaults: dict,
         devices: list | None = None,
+        inference_defaults: dict | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -42,6 +44,7 @@ class ControlsPanel(QFrame):
         self._model_keys = model_keys
         self._defaults = defaults
         self._devices = devices or []
+        self._inference_defaults = inference_defaults or {}
         self._current_source = "camera"
         self._setup_ui()
 
@@ -85,6 +88,17 @@ class ControlsPanel(QFrame):
             self._model_combo.addItem(key.upper(), key)
         self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         layout.addWidget(self._model_combo)
+
+        # ── Inference Mode ────────────────────────────────────────────
+        layout.addWidget(self._make_label("Inference Mode"))
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem("Standard", "standard")
+        self._mode_combo.addItem("SAHI", "sahi")
+        self._mode_combo.currentIndexChanged.connect(self._on_inference_mode_changed)
+        layout.addWidget(self._mode_combo)
+
+        default_mode = str(self._inference_defaults.get("mode", "standard")).lower()
+        self.set_inference_mode(default_mode)
 
         self._add_separator(layout)
 
@@ -219,6 +233,19 @@ class ControlsPanel(QFrame):
                 self._device_combo.setCurrentIndex(i)
                 return
 
+    def set_inference_mode(self, mode: str) -> None:
+        """Programmatically select inference mode in the dropdown."""
+        normalized = str(mode).lower().strip()
+        for i in range(self._mode_combo.count()):
+            if self._mode_combo.itemData(i) == normalized:
+                self._mode_combo.setCurrentIndex(i)
+                return
+
+    @property
+    def inference_mode(self) -> str:
+        data = self._mode_combo.currentData()
+        return str(data) if data is not None else "standard"
+
     @property
     def confidence_threshold(self) -> float:
         return self._conf_slider.value() / 100.0
@@ -256,6 +283,11 @@ class ControlsPanel(QFrame):
         fval = value / 100.0
         self._conf_label.setText(f"Confidence: {fval:.0%}")
         self.conf_threshold_changed.emit(fval)
+
+    def _on_inference_mode_changed(self, index: int) -> None:
+        mode = self._mode_combo.itemData(index)
+        if mode is not None:
+            self.inference_mode_changed.emit(str(mode))
 
     def _on_iou_changed(self, value: int) -> None:
         fval = value / 100.0
